@@ -14,6 +14,10 @@ import AppLayout from "@/components/layout/AppLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import SqlConsole from "@/pages/SqlConsole";
+import RoomsManagement from "@/pages/RoomsManagement";
+import Appointments from "@/pages/Appointments";
+import Medications from "@/pages/Medications";
+import Billing from "@/pages/Billing";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -34,13 +38,14 @@ const App = () => (
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/sql-console" element={<SqlConsole />} />
+                <Route path="/rooms" element={<RoomsManagement />} />
+                <Route path="/appointments" element={<Appointments />} />
+                <Route path="/medications" element={<Medications />} />
+                <Route path="/billing" element={<Billing />} />
                 
                 {/* Add these routes as placeholders for now */}
                 <Route path="/doctors" element={<ComingSoon title="Doctors Management" />} />
                 <Route path="/patients" element={<ComingSoon title="Patients Management" />} />
-                <Route path="/rooms" element={<ComingSoon title="Room Management" />} />
-                <Route path="/appointments" element={<ComingSoon title="Appointments" />} />
-                <Route path="/billing" element={<ComingSoon title="Billing" />} />
                 <Route path="/reports" element={<ComingSoon title="Reports" />} />
                 <Route path="/analytics" element={<ComingSoon title="Analytics" />} />
                 <Route path="/profile" element={<ComingSoon title="User Profile" />} />
@@ -66,7 +71,7 @@ const ComingSoon = ({ title }: { title: string }) => (
     </p>
     <div className="w-16 h-1 bg-mediease-500 rounded-full mb-6"></div>
     <p className="text-sm text-muted-foreground max-w-md">
-      In the meantime, feel free to explore the Dashboard and SQL Console for a preview of the system's capabilities.
+      In the meantime, feel free to explore the Dashboard and other available features for a preview of the system's capabilities.
     </p>
   </div>
 );
