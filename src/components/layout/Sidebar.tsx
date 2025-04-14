@@ -1,5 +1,5 @@
-
 import { useAuth } from "@/contexts/AuthContext";
+import { User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "react-router-dom";
 import { 
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { User } from "@/contexts/AuthContext";
 
 type SidebarItem = {
   title: string;
@@ -156,7 +157,7 @@ const Sidebar = () => {
             {!isCollapsed && (
               <>
                 <div className="rounded-full bg-white p-1">
-                  <User className="h-6 w-6 text-primary" />
+                  <UserIcon className="h-6 w-6 text-primary" />
                 </div>
                 <div>
                   <p className="font-medium text-sm">{user.name}</p>
