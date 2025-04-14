@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Clipboard, ClipboardCheck } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 interface QueryCardProps {
   query: string;
@@ -12,8 +13,11 @@ export function QueryCard({ query }: QueryCardProps) {
   const [copied, setCopied] = useState(false);
 
   const copyToClipboard = () => {
+    if (!query) return;
+    
     navigator.clipboard.writeText(query);
     setCopied(true);
+    toast.success("SQL query copied to clipboard");
     setTimeout(() => setCopied(false), 2000);
   };
 

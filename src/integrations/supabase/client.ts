@@ -17,4 +17,25 @@ const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 // - Listen to realtime changes: 
 //   const channel = supabase.channel('table-changes').on('postgres_changes', { event: '*', schema: 'public' }, callback).subscribe()
 
+// Create the Supabase client
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+// Function to log database operations to analytics_logs table
+export const logDatabaseOperation = async (
+  action_type: string,
+  table_name: string,
+  query: string,
+  record_id?: string
+) => {
+  try {
+    await supabase.from('analytics_logs').insert({
+      action_type,
+      table_name,
+      query,
+      record_id,
+      performed_by: 'current_user' // In a real app, this would be the authenticated user
+    });
+  } catch (error) {
+    console.error('Error logging operation:', error);
+  }
+};
