@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -85,7 +84,6 @@ const DoctorsManagement = () => {
     },
   });
 
-  // Fetch doctors from Supabase
   const fetchDoctors = async () => {
     setLoading(true);
     try {
@@ -104,7 +102,6 @@ const DoctorsManagement = () => {
       
       setDoctors(data || []);
       
-      // Log the action in analytics_logs
       await supabase.from("analytics_logs").insert({
         action_type: "SELECT",
         table_name: "doctors",
@@ -124,7 +121,6 @@ const DoctorsManagement = () => {
     }
   };
 
-  // Initialize real-time subscription
   const setupRealtimeSubscription = () => {
     const channel = supabase
       .channel('doctors-changes')
@@ -150,7 +146,6 @@ const DoctorsManagement = () => {
     };
   }, []);
 
-  // Filter doctors based on search term
   const filteredDoctors = doctors.filter(
     (doctor) =>
       doctor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -158,7 +153,6 @@ const DoctorsManagement = () => {
       doctor.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Handle form submission (create/edit doctor)
   const onSubmit = async (values: DoctorFormValues) => {
     try {
       let actionType = "INSERT";
@@ -170,7 +164,15 @@ const DoctorsManagement = () => {
         
         const { error } = await supabase
           .from("doctors")
-          .update(values)
+          .update({
+            name: values.name,
+            specialization: values.specialization,
+            qualification: values.qualification,
+            experience: values.experience,
+            contact: values.contact,
+            email: values.email,
+            availability: values.availability
+          })
           .eq("id", editingDoctor.id);
         
         if (error) throw error;
@@ -182,7 +184,15 @@ const DoctorsManagement = () => {
       } else {
         const { error } = await supabase
           .from("doctors")
-          .insert(values);
+          .insert({
+            name: values.name,
+            specialization: values.specialization,
+            qualification: values.qualification,
+            experience: values.experience,
+            contact: values.contact,
+            email: values.email,
+            availability: values.availability
+          });
         
         if (error) throw error;
         
@@ -192,7 +202,6 @@ const DoctorsManagement = () => {
         });
       }
       
-      // Log the action in analytics_logs
       await supabase.from("analytics_logs").insert({
         action_type: actionType,
         table_name: "doctors",
@@ -214,7 +223,6 @@ const DoctorsManagement = () => {
     }
   };
 
-  // Handle doctor deletion
   const handleDeleteDoctor = async (doctor: Doctor) => {
     if (confirm(`Are you sure you want to delete Dr. ${doctor.name}?`)) {
       try {
@@ -227,7 +235,6 @@ const DoctorsManagement = () => {
         
         if (error) throw error;
         
-        // Log the action in analytics_logs
         await supabase.from("analytics_logs").insert({
           action_type: "DELETE",
           table_name: "doctors",
@@ -253,7 +260,6 @@ const DoctorsManagement = () => {
     }
   };
 
-  // Open dialog for editing a doctor
   const handleEditDoctor = (doctor: Doctor) => {
     setEditingDoctor(doctor);
     form.reset({
@@ -268,7 +274,6 @@ const DoctorsManagement = () => {
     setOpenDialog(true);
   };
 
-  // Open dialog for adding a new doctor
   const handleAddDoctor = () => {
     setEditingDoctor(null);
     form.reset({
@@ -389,7 +394,6 @@ const DoctorsManagement = () => {
         <QueryCard query={lastQuery} />
       </div>
 
-      {/* Doctor Form Dialog */}
       <Dialog open={openDialog} onOpenChange={setOpenDialog}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>

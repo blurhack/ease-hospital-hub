@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -115,23 +114,30 @@ const Analytics = () => {
         performed_by: "current_user",
       });
       
-      // Get counts by action type
-      const { data: actionData, error: actionError } = await supabase
-        .from("analytics_logs")
-        .select("action_type, count")
-        .select("action_type, count(*)")
-        .groupBy("action_type");
+      // Get counts by action type using client-side grouping instead of server-side
+      const actionTypeCounts: Record<string, number> = {};
+      logs.forEach(log => {
+        actionTypeCounts[log.action_type] = (actionTypeCounts[log.action_type] || 0) + 1;
+      });
       
-      if (actionError) throw actionError;
+      const actionData: ActionCount[] = Object.entries(actionTypeCounts).map(([action_type, count]) => ({
+        action_type,
+        count
+      }));
+      
       setActionCounts(actionData);
       
-      // Get counts by table
-      const { data: tableData, error: tableError } = await supabase
-        .from("analytics_logs")
-        .select("table_name, count(*)")
-        .groupBy("table_name");
+      // Get counts by table using client-side grouping
+      const tableTypeCounts: Record<string, number> = {};
+      logs.forEach(log => {
+        tableTypeCounts[log.table_name] = (tableTypeCounts[log.table_name] || 0) + 1;
+      });
       
-      if (tableError) throw tableError;
+      const tableData: TableActionCount[] = Object.entries(tableTypeCounts).map(([table_name, count]) => ({
+        table_name,
+        count
+      }));
+      
       setTableActionCounts(tableData);
       
     } catch (error) {
