@@ -1,3 +1,4 @@
+
 import { useAuth } from "@/contexts/AuthContext";
 import { User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ import {
   Menu, 
   Users,
   Database,
+  Activity,
   X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -71,7 +73,7 @@ const sidebarItems: SidebarItem[] = [
   },
   {
     title: "Analytics",
-    icon: BarChart3,
+    icon: Activity,
     href: "/analytics",
     roles: ["admin"],
   },

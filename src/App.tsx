@@ -18,6 +18,8 @@ import RoomsManagement from "@/pages/RoomsManagement";
 import Appointments from "@/pages/Appointments";
 import Medications from "@/pages/Medications";
 import Billing from "@/pages/Billing";
+import Doctors from "@/pages/Doctors";
+import Analytics from "@/pages/Analytics";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,12 +44,12 @@ const App = () => (
                 <Route path="/appointments" element={<Appointments />} />
                 <Route path="/medications" element={<Medications />} />
                 <Route path="/billing" element={<Billing />} />
+                <Route path="/doctors" element={<Doctors />} />
+                <Route path="/analytics" element={<Analytics />} />
                 
                 {/* Add these routes as placeholders for now */}
-                <Route path="/doctors" element={<ComingSoon title="Doctors Management" />} />
                 <Route path="/patients" element={<ComingSoon title="Patients Management" />} />
                 <Route path="/reports" element={<ComingSoon title="Reports" />} />
-                <Route path="/analytics" element={<ComingSoon title="Analytics" />} />
                 <Route path="/profile" element={<ComingSoon title="User Profile" />} />
                 <Route path="/settings" element={<ComingSoon title="Settings" />} />
               </Route>
