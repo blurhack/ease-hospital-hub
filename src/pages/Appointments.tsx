@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect } from "react";
-import { useData } from "@/contexts/DataContext";
 import { supabase, logDatabaseOperation } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { 
@@ -41,12 +40,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Appointments = () => {
-  const { doctors, patients } = useData();
+  const [doctors, setDoctors] = useState([]);
+  const [patients, setPatients] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [queryResult, setQueryResult] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   
   // New appointment form state
   const [newAppointment, setNewAppointment] = useState({
@@ -58,8 +59,64 @@ const Appointments = () => {
     status: "scheduled",
   });
 
-  // Handler for input changes - updated to handle all input types
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  // Fetch doctors and patients data
+  useEffect(() => {
+    fetchDoctors();
+    fetchPatients();
+  }, []);
+
+  const fetchDoctors = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('doctors')
+        .select('*');
+      
+      if (error) {
+        console.error("Error fetching doctors:", error);
+        toast({ 
+          title: "Error", 
+          description: "Failed to fetch doctors" 
+        });
+      } else {
+        console.log("Fetched doctors:", data);
+        setDoctors(data || []);
+      }
+    } catch (err) {
+      console.error("Exception when fetching doctors:", err);
+      toast({ 
+        title: "Error", 
+        description: "An unexpected error occurred" 
+      });
+    }
+  };
+
+  const fetchPatients = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('patients')
+        .select('*');
+      
+      if (error) {
+        console.error("Error fetching patients:", error);
+        toast({ 
+          title: "Error", 
+          description: "Failed to fetch patients" 
+        });
+      } else {
+        console.log("Fetched patients:", data);
+        setPatients(data || []);
+      }
+    } catch (err) {
+      console.error("Exception when fetching patients:", err);
+      toast({ 
+        title: "Error", 
+        description: "An unexpected error occurred" 
+      });
+    }
+  };
+
+  // Handler for input changes - handles all input types
+  const handleInputChange = (e) => {
     const { name, value } = e.target;
     setNewAppointment(prev => ({
       ...prev,
@@ -68,7 +125,7 @@ const Appointments = () => {
   };
 
   // Handler for select changes
-  const handleSelectChange = (name: string, value: string) => {
+  const handleSelectChange = (name, value) => {
     setNewAppointment(prev => ({
       ...prev,
       [name]: value
@@ -200,7 +257,7 @@ const Appointments = () => {
           description: "Appointment has been added successfully"
         });
         
-        // Reset form
+        // Reset form and close dialog
         setNewAppointment({
           patient_id: "",
           doctor_id: "",
@@ -209,6 +266,8 @@ const Appointments = () => {
           reason: "",
           status: "scheduled"
         });
+        
+        setIsDialogOpen(false);
       }
     } catch (err) {
       console.error("Exception when adding appointment:", err);
@@ -247,16 +306,44 @@ const Appointments = () => {
     const doctor = doctors.find(d => d.id === appointment.doctor_id);
     
     return (
-      (patient?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      doctor?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      appointment.reason.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      appointment.status.toLowerCase().includes(searchTerm.toLowerCase()))
+      (patient?.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      doctor?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      appointment.reason?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      appointment.status?.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   });
 
   const upcomingAppointments = filteredAppointments.filter(a => a.status === "scheduled");
   const completedAppointments = filteredAppointments.filter(a => a.status === "completed");
   const cancelledAppointments = filteredAppointments.filter(a => a.status === "cancelled");
+
+  const handleUpdateStatus = async (id, newStatus) => {
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .update({ status: newStatus })
+        .eq('id', id);
+      
+      if (error) {
+        console.error("Error updating appointment status:", error);
+        toast({
+          title: "Error",
+          description: "Failed to update appointment status"
+        });
+      } else {
+        toast({
+          title: "Status Updated",
+          description: `Appointment marked as ${newStatus}`
+        });
+      }
+    } catch (err) {
+      console.error("Exception when updating appointment status:", err);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred"
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -266,7 +353,7 @@ const Appointments = () => {
           <h1 className="text-2xl font-bold">Appointments</h1>
         </div>
         
-        <Dialog>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="h-4 w-4 mr-2" />
@@ -516,8 +603,23 @@ const Appointments = () => {
                       </div>
                       
                       <div className="flex gap-2 pt-2">
-                        <Button variant="outline" size="sm" className="flex-1">Cancel</Button>
-                        <Button size="sm" className="flex-1">Reschedule</Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="flex-1"
+                          onClick={() => handleUpdateStatus(selectedAppointment.id, "cancelled")}
+                          disabled={selectedAppointment.status === "cancelled"}
+                        >
+                          Cancel
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          className="flex-1"
+                          onClick={() => handleUpdateStatus(selectedAppointment.id, "completed")}
+                          disabled={selectedAppointment.status === "completed"}
+                        >
+                          Mark Complete
+                        </Button>
                       </div>
                     </div>
                   );
