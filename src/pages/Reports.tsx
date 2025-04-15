@@ -164,22 +164,31 @@ const Reports = () => {
     if (reportType === "appointments") {
       csvContent = "ID,Patient,Doctor,Date,Time,Status,Reason\n";
       reportData.forEach((appointment) => {
-        csvContent += `${appointment.id},${appointment.patient.name},${appointment.doctor.name},${appointment.date},${appointment.time},${appointment.status},${appointment.reason || ""}\n`;
+        // Check if appointment.patient and appointment.doctor exist before accessing their properties
+        const patientName = appointment.patient?.name || "Unknown";
+        const doctorName = appointment.doctor?.name || "Unknown";
+        csvContent += `${appointment.id},${patientName},${doctorName},${appointment.date},${appointment.time},${appointment.status},${appointment.reason || ""}\n`;
       });
     } else if (reportType === "billing") {
       csvContent = "ID,Patient,Date,Amount,Status\n";
       reportData.forEach((bill) => {
-        csvContent += `${bill.id},${bill.patient.name},${new Date(bill.date).toLocaleDateString()},${bill.amount},${bill.status}\n`;
+        // Check if bill.patient exists before accessing its properties
+        const patientName = bill.patient?.name || "Unknown";
+        csvContent += `${bill.id},${patientName},${new Date(bill.date).toLocaleDateString()},${bill.amount},${bill.status}\n`;
       });
     } else if (reportType === "patients") {
       csvContent = "ID,Name,Age,Gender,Blood Group,Contact,Email,Address,Doctor\n";
       reportData.forEach((patient) => {
-        csvContent += `${patient.id},${patient.name},${patient.age},${patient.gender},${patient.blood_group},${patient.contact},${patient.email},${patient.address},${patient.assigned_doctor ? patient.assigned_doctor.name : "None"}\n`;
+        // Check if patient.assigned_doctor exists before accessing its properties
+        const doctorInfo = patient.assigned_doctor 
+          ? `${patient.assigned_doctor.name} (${patient.assigned_doctor.specialization})` 
+          : "None";
+        csvContent += `${patient.id},${patient.name},${patient.age},${patient.gender},${patient.blood_group},${patient.contact},${patient.email},${patient.address},${doctorInfo}\n`;
       });
     } else if (reportType === "rooms") {
       csvContent = "ID,Number,Type,Status,Floor,Capacity,Current Patients,Price\n";
       reportData.forEach((room) => {
-        csvContent += `${room.id},${room.number},${room.type},${room.status},${room.floor},${room.capacity},${room.current_patients},${room.price}\n`;
+        csvContent += `${room.id},${room.number},${room.type},${room.status},${room.floor},${room.capacity},${room.current_patients || 0},${room.price}\n`;
       });
     }
     
@@ -222,10 +231,11 @@ const Reports = () => {
         amountByStatus[status] = (amountByStatus[status] || 0) + Number(bill.amount);
       });
       
+      // For billing, we need to transform the data for ResponsiveBar
       return Object.entries(statusCounts).map(([status, count]) => ({
-        status,
-        count,
-        amount: parseFloat(amountByStatus[status].toFixed(2)),
+        id: status,
+        label: status.charAt(0).toUpperCase() + status.slice(1),
+        value: parseFloat(amountByStatus[status].toFixed(2)),
       }));
     } else if (reportType === "patients") {
       // Group patients by gender
@@ -261,6 +271,29 @@ const Reports = () => {
     }
     
     return [];
+  };
+
+  // Calculate room utilization data for the bar chart
+  const getRoomUtilizationData = () => {
+    if (!reportData.length || reportType !== "rooms") return [];
+    
+    const roomTypes: Record<string, { total: number; used: number }> = {};
+    
+    reportData.forEach((room) => {
+      if (!roomTypes[room.type]) {
+        roomTypes[room.type] = { total: 0, used: 0 };
+      }
+      
+      roomTypes[room.type].total += room.capacity;
+      roomTypes[room.type].used += room.current_patients || 0;
+    });
+    
+    return Object.entries(roomTypes).map(([type, data]) => ({
+      type: type.charAt(0).toUpperCase() + type.slice(1),
+      capacity: data.total,
+      used: data.used,
+      utilization: data.total > 0 ? Math.round((data.used / data.total) * 100) : 0,
+    }));
   };
 
   return (
@@ -420,8 +453,8 @@ const Reports = () => {
                       {reportType === "appointments" &&
                         reportData.map((appointment) => (
                           <TableRow key={appointment.id}>
-                            <TableCell>{appointment.patient.name}</TableCell>
-                            <TableCell>{appointment.doctor.name}</TableCell>
+                            <TableCell>{appointment.patient?.name || "Unknown"}</TableCell>
+                            <TableCell>{appointment.doctor?.name || "Unknown"}</TableCell>
                             <TableCell>{appointment.date}</TableCell>
                             <TableCell>{appointment.time}</TableCell>
                             <TableCell>
@@ -443,7 +476,7 @@ const Reports = () => {
                       {reportType === "billing" &&
                         reportData.map((bill) => (
                           <TableRow key={bill.id}>
-                            <TableCell>{bill.patient.name}</TableCell>
+                            <TableCell>{bill.patient?.name || "Unknown"}</TableCell>
                             <TableCell>
                               {new Date(bill.date).toLocaleDateString()}
                             </TableCell>
@@ -517,7 +550,7 @@ const Reports = () => {
                             </TableCell>
                             <TableCell>{room.floor}</TableCell>
                             <TableCell>{room.capacity}</TableCell>
-                            <TableCell>{room.current_patients}</TableCell>
+                            <TableCell>{room.current_patients || 0}</TableCell>
                             <TableCell>${room.price}</TableCell>
                           </TableRow>
                         ))}
@@ -613,8 +646,8 @@ const Reports = () => {
                       <div className="h-80">
                         <ResponsiveBar
                           data={getChartData()}
-                          keys={["amount"]}
-                          indexBy="status"
+                          keys={["value"]}
+                          indexBy="id"
                           margin={{ top: 50, right: 50, bottom: 50, left: 60 }}
                           padding={0.3}
                           valueScale={{ type: "linear" }}
@@ -643,8 +676,6 @@ const Reports = () => {
                           labelSkipHeight={12}
                           labelTextColor={{ from: "color", modifiers: [["darker", 1.6]] }}
                           animate={true}
-                          motionStiffness={90}
-                          motionDamping={15}
                         />
                       </div>
                     </div>
@@ -657,28 +688,7 @@ const Reports = () => {
                       </h3>
                       <div className="h-80">
                         <ResponsiveBar
-                          data={
-                            // Calculate utilization for each room type
-                            (() => {
-                              const roomTypes: Record<string, { total: number; used: number }> = {};
-                              
-                              reportData.forEach((room) => {
-                                if (!roomTypes[room.type]) {
-                                  roomTypes[room.type] = { total: 0, used: 0 };
-                                }
-                                
-                                roomTypes[room.type].total += room.capacity;
-                                roomTypes[room.type].used += room.current_patients || 0;
-                              });
-                              
-                              return Object.entries(roomTypes).map(([type, data]) => ({
-                                type: type.charAt(0).toUpperCase() + type.slice(1),
-                                capacity: data.total,
-                                used: data.used,
-                                utilization: data.total > 0 ? Math.round((data.used / data.total) * 100) : 0,
-                              }));
-                            })()
-                          }
+                          data={getRoomUtilizationData()}
                           keys={["used", "capacity"]}
                           indexBy="type"
                           margin={{ top: 50, right: 50, bottom: 50, left: 60 }}
@@ -734,8 +744,6 @@ const Reports = () => {
                             },
                           ]}
                           animate={true}
-                          motionStiffness={90}
-                          motionDamping={15}
                         />
                       </div>
                     </div>
