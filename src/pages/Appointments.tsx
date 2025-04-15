@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { useData } from "@/contexts/DataContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,9 +57,17 @@ const Appointments = () => {
     status: "scheduled",
   });
 
-  // Handler for input changes
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handler for input changes - updated to handle all input types
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    setNewAppointment(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  // Handler for select changes
+  const handleSelectChange = (name: string, value: string) => {
     setNewAppointment(prev => ({
       ...prev,
       [name]: value
@@ -219,7 +228,7 @@ const Appointments = () => {
                 <Label htmlFor="patientId">Patient</Label>
                 <Select 
                   value={newAppointment.patient_id}
-                  onValueChange={(value) => setNewAppointment({...newAppointment, patient_id: value})}
+                  onValueChange={(value) => handleSelectChange("patient_id", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select patient" />
@@ -238,7 +247,7 @@ const Appointments = () => {
                 <Label htmlFor="doctorId">Doctor</Label>
                 <Select 
                   value={newAppointment.doctor_id}
-                  onValueChange={(value) => setNewAppointment({...newAppointment, doctor_id: value})}
+                  onValueChange={(value) => handleSelectChange("doctor_id", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select doctor" />
