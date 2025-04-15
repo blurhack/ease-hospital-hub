@@ -23,7 +23,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
 // Enable real-time subscriptions for specific tables
 export const enableRealtimeForTable = async (tableName: string) => {
   try {
-    await supabase.channel(`public:${tableName}`)
+    const channel = await supabase.channel(`public:${tableName}`)
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
@@ -34,8 +34,32 @@ export const enableRealtimeForTable = async (tableName: string) => {
       })
       .subscribe();
     console.log(`Real-time enabled for ${tableName}`);
+    return channel;
   } catch (error) {
     console.error(`Error enabling real-time for ${tableName}:`, error);
+    throw error;
+  }
+};
+
+// Enable real-time for all tables
+export const enableRealtimeForAllTables = async () => {
+  try {
+    const tables = [
+      'doctors',
+      'patients',
+      'appointments',
+      'rooms',
+      'bills',
+      'medications',
+      'patient_medications'
+    ];
+    
+    for (const table of tables) {
+      await enableRealtimeForTable(table);
+    }
+    console.log('Real-time enabled for all tables');
+  } catch (error) {
+    console.error('Error enabling real-time for all tables:', error);
   }
 };
 
@@ -58,3 +82,37 @@ export const logDatabaseOperation = async (
     console.error('Error logging operation:', error);
   }
 };
+
+// Function to get the table name from a schema string
+export const getTableName = (schemaString: string) => {
+  const match = schemaString.match(/from\s+([^\s,;]+)/i);
+  return match ? match[1] : null;
+};
+
+// Function to handle common database errors
+export const handleDatabaseError = (error: any, operation: string) => {
+  console.error(`Database error during ${operation}:`, error);
+  
+  let errorMessage = "An error occurred while performing database operation.";
+  
+  if (error.code === "23505") {
+    errorMessage = "A record with this information already exists.";
+  } else if (error.code === "23503") {
+    errorMessage = "Cannot perform this operation due to related records.";
+  } else if (error.message) {
+    errorMessage = error.message;
+  }
+  
+  toast({
+    title: `Error during ${operation}`,
+    description: errorMessage,
+    variant: "destructive",
+  });
+  
+  return errorMessage;
+};
+
+// Initialize toast if needed
+function toast(options: { title: string; description: string; variant?: string }) {
+  console.error(`${options.title}: ${options.description}`);
+}

@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useData } from "@/contexts/DataContext";
 import { 
   Card, 
@@ -48,9 +48,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 
 const Billing = () => {
-  const { bills, patients, executeSqlQuery } = useData();
+  const { bills: contextBills, patients: contextPatients, executeSqlQuery } = useData();
+  const [bills, setBills] = useState(contextBills);
+  const [patients, setPatients] = useState(contextPatients);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBill, setSelectedBill] = useState<string | null>(null);
   const [queryResult, setQueryResult] = useState<string>("");
@@ -62,6 +66,63 @@ const Billing = () => {
     status: "pending" as "paid" | "pending" | "overdue",
     items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }]
   });
+
+  // Fetch patients from Supabase
+  const { data: supabasePatients } = useQuery({
+    queryKey: ['patients'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('patients').select('*');
+      if (error) {
+        toast({
+          title: "Error fetching patients",
+          description: error.message,
+          variant: "destructive",
+        });
+        return [];
+      }
+      setPatients(data || []);
+      return data || [];
+    }
+  });
+
+  // Fetch bills from Supabase
+  const { data: supabillsBills, refetch: refetchBills } = useQuery({
+    queryKey: ['bills'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bills').select('*');
+      if (error) {
+        toast({
+          title: "Error fetching bills",
+          description: error.message,
+          variant: "destructive",
+        });
+        return [];
+      }
+      setBills(data || []);
+      return data || [];
+    }
+  });
+
+  // Set up real-time subscription for bills
+  useEffect(() => {
+    const billsSubscription = supabase
+      .channel('public:bills')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'bills' },
+        (payload) => {
+          console.log('Bills change received:', payload);
+          refetchBills();
+          toast({
+            title: "Billing data updated",
+            description: "The billing information has been updated.",
+          });
+        })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(billsSubscription);
+    };
+  }, [refetchBills]);
 
   const handlePatientChange = (value: string) => {
     setNewBill({
@@ -125,54 +186,138 @@ const Billing = () => {
     return newBill.items.reduce((sum, item) => sum + item.total, 0);
   };
 
-  const handleAddBill = () => {
-    // This would normally add the bill to the database
-    toast({
-      title: "Bill created",
-      description: `Bill has been created successfully.`,
-    });
+  const handleAddBill = async () => {
+    if (!newBill.patientId) {
+      toast({
+        title: "Missing information",
+        description: "Please select a patient.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newBill.items.some(item => !item.description || item.total <= 0)) {
+      toast({
+        title: "Missing information",
+        description: "Please fill in all bill items with valid amounts.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const totalAmount = calculateTotal();
     
-    // Reset form
-    setNewBill({
-      patientId: "",
-      date: new Date().toISOString().split("T")[0],
-      status: "pending",
-      items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }]
-    });
+    try {
+      // Insert the bill into Supabase
+      const { data, error } = await supabase.from('bills').insert({
+        patient_id: newBill.patientId,
+        date: newBill.date,
+        amount: totalAmount,
+        status: newBill.status,
+        items: newBill.items
+      }).select();
+
+      if (error) throw error;
+      
+      toast({
+        title: "Bill created",
+        description: `Bill has been created successfully.`,
+      });
+
+      // Execute and log the SQL query
+      const query = `INSERT INTO bills (patient_id, date, amount, status, items) 
+                     VALUES ('${newBill.patientId}', '${newBill.date}', ${totalAmount}, 
+                     '${newBill.status}', '${JSON.stringify(newBill.items)}')`;
+      
+      await supabase.from('analytics_logs').insert({
+        action_type: 'INSERT',
+        table_name: 'bills',
+        query: query,
+        performed_by: 'current_user'
+      });
+      
+      // Reset form
+      setNewBill({
+        patientId: "",
+        date: new Date().toISOString().split("T")[0],
+        status: "pending",
+        items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }]
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error creating bill",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleBillSelect = (billId: string) => {
+  const handleBillSelect = async (billId: string) => {
     setSelectedBill(billId);
     
     // Execute and show query
     const query = `SELECT b.*, p.name as patient_name 
                   FROM bills b 
-                  JOIN patients p ON b.patientId = p.id 
+                  JOIN patients p ON b.patient_id = p.id 
                   WHERE b.id = '${billId}'`;
     setQueryResult(query);
+    
+    try {
+      await supabase.from('analytics_logs').insert({
+        action_type: 'SELECT',
+        table_name: 'bills',
+        query: query,
+        performed_by: 'current_user',
+        record_id: billId
+      });
+    } catch (error) {
+      console.error("Error logging selection:", error);
+    }
   };
 
-  const handleUpdateBillStatus = (billId: string, status: "paid" | "pending" | "overdue") => {
-    // This would normally update the bill in the database
-    toast({
-      title: "Bill status updated",
-      description: `Bill status has been updated to ${status}.`,
-    });
-    
-    // Execute and show query
-    const query = `UPDATE bills 
-                  SET status = '${status}' 
-                  WHERE id = '${billId}'`;
-    setQueryResult(query);
+  const handleUpdateBillStatus = async (billId: string, status: "paid" | "pending" | "overdue") => {
+    try {
+      const { error } = await supabase
+        .from('bills')
+        .update({ status })
+        .eq('id', billId);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Bill status updated",
+        description: `Bill status has been updated to ${status}.`,
+      });
+      
+      // Execute and show query
+      const query = `UPDATE bills 
+                    SET status = '${status}' 
+                    WHERE id = '${billId}'`;
+      setQueryResult(query);
+      
+      await supabase.from('analytics_logs').insert({
+        action_type: 'UPDATE',
+        table_name: 'bills',
+        query: query,
+        performed_by: 'current_user',
+        record_id: billId
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error updating bill",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
   };
 
   const filteredBills = bills.filter(bill => {
-    const patient = patients.find(p => p.id === bill.patientId);
+    const patient = patients.find(p => p.id === bill.patient_id || p.id === bill.patientId);
     
     return (
       (patient?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       bill.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      bill.date.includes(searchTerm))
+      (bill.date && bill.date.toString().includes(searchTerm)))
     );
   });
 
@@ -198,17 +343,95 @@ const Billing = () => {
     const bill = bills.find(b => b.id === billId);
     if (!bill) return;
     
-    // In a real app, this would generate a PDF
-    // For now, we'll just show a toast
+    // Get patient name
+    const patientName = getPatientName(bill.patient_id || bill.patientId);
+    
+    // Create a PDF blob
+    const downloadBill = {
+      billId,
+      patientName,
+      date: bill.date,
+      amount: bill.amount,
+      status: bill.status,
+      items: bill.items || []
+    };
+    
+    // Create blob and trigger download
+    const billData = JSON.stringify(downloadBill, null, 2);
+    const blob = new Blob([billData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link and trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bill-${billId}-${patientName}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
     toast({
-      title: "PDF Generated",
-      description: `Bill #${billId} has been prepared for download.`,
+      title: "Bill Downloaded",
+      description: `Bill #${billId} has been downloaded.`,
     });
   };
 
   const printBill = (billId: string) => {
-    // In a real app, this would open the print dialog
-    // For now, we'll just show a toast
+    const bill = bills.find(b => b.id === billId);
+    if (!bill) return;
+    
+    // In a real app, this would format data for printing
+    // For now, we'll open a new window with bill info
+    const patientName = getPatientName(bill.patient_id || bill.patientId);
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Bill #${billId}</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              h1 { color: #333; }
+              table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+              th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+              .total { font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <h1>Medical Bill</h1>
+            <p><strong>Bill #:</strong> ${billId}</p>
+            <p><strong>Patient:</strong> ${patientName}</p>
+            <p><strong>Date:</strong> ${bill.date}</p>
+            <p><strong>Status:</strong> ${bill.status}</p>
+            
+            <table>
+              <tr>
+                <th>Description</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Total</th>
+              </tr>
+              ${(bill.items || []).map(item => `
+                <tr>
+                  <td>${item.description}</td>
+                  <td>${item.quantity}</td>
+                  <td>$${item.unitPrice.toFixed(2)}</td>
+                  <td>$${item.total.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+              <tr class="total">
+                <td colspan="3">Total Amount</td>
+                <td>$${bill.amount.toFixed(2)}</td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+    }
+    
     toast({
       title: "Print Prepared",
       description: `Bill #${billId} has been sent to printer.`,
@@ -425,7 +648,7 @@ const Billing = () => {
                         >
                           {bill.id}
                         </TableCell>
-                        <TableCell>{getPatientName(bill.patientId)}</TableCell>
+                        <TableCell>{getPatientName(bill.patient_id || bill.patientId)}</TableCell>
                         <TableCell>{bill.date}</TableCell>
                         <TableCell>${bill.amount.toFixed(2)}</TableCell>
                         <TableCell>
@@ -487,7 +710,7 @@ const Billing = () => {
                   const bill = bills.find(b => b.id === selectedBill);
                   if (!bill) return null;
                   
-                  const patient = patients.find(p => p.id === bill.patientId);
+                  const patientName = getPatientName(bill.patient_id || bill.patientId);
                   
                   return (
                     <div className="space-y-4">
@@ -502,7 +725,7 @@ const Billing = () => {
                       <div className="flex items-center gap-3 pb-2 border-b">
                         <User className="h-6 w-6 text-blue-600" />
                         <div>
-                          <p className="font-medium">{patient?.name}</p>
+                          <p className="font-medium">{patientName}</p>
                           <p className="text-sm text-muted-foreground">Patient</p>
                         </div>
                       </div>
@@ -510,7 +733,7 @@ const Billing = () => {
                       <div className="pb-2 border-b">
                         <p className="text-sm text-muted-foreground mb-1">Items</p>
                         <div className="space-y-2">
-                          {bill.items.map((item, index) => (
+                          {(bill.items || []).map((item, index) => (
                             <div key={index} className="flex justify-between text-sm">
                               <span>{item.description} (x{item.quantity})</span>
                               <span>${item.total.toFixed(2)}</span>

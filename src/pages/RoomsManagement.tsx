@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useData } from "@/contexts/DataContext";
 import { 
   Card, 
@@ -24,12 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
-import { BedDouble, Search, Plus, ArrowRight, Database } from "lucide-react";
+import { BedDouble, Search, Plus, ArrowRight, Database, UserRound } from "lucide-react";
 import { 
   Select,
   SelectContent,
@@ -37,12 +38,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 
 const RoomsManagement = () => {
-  const { rooms, updateRoomStatus, addRoom, executeSqlQuery } = useData();
+  const { rooms: contextRooms, updateRoomStatus, addRoom, executeSqlQuery } = useData();
+  const [rooms, setRooms] = useState(contextRooms);
+  const [patients, setPatients] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [queryResult, setQueryResult] = useState<string>("");
+  const [showPatientDialog, setShowPatientDialog] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState("");
   
   // New room form state
   const [newRoom, setNewRoom] = useState({
@@ -55,6 +62,63 @@ const RoomsManagement = () => {
     price: 200,
   });
 
+  // Fetch rooms from Supabase
+  const { data: supabaseRooms, refetch: refetchRooms } = useQuery({
+    queryKey: ['rooms'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('rooms').select('*');
+      if (error) {
+        toast({
+          title: "Error fetching rooms",
+          description: error.message,
+          variant: "destructive",
+        });
+        return [];
+      }
+      setRooms(data || []);
+      return data || [];
+    }
+  });
+
+  // Fetch patients from Supabase
+  const { data: supabasePatients } = useQuery({
+    queryKey: ['patients'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('patients').select('*');
+      if (error) {
+        toast({
+          title: "Error fetching patients",
+          description: error.message,
+          variant: "destructive",
+        });
+        return [];
+      }
+      setPatients(data || []);
+      return data || [];
+    }
+  });
+
+  // Set up real-time subscription for rooms
+  useEffect(() => {
+    const roomsSubscription = supabase
+      .channel('public:rooms')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'rooms' },
+        (payload) => {
+          console.log('Rooms change received:', payload);
+          refetchRooms();
+          toast({
+            title: "Rooms data updated",
+            description: "The rooms information has been updated.",
+          });
+        })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(roomsSubscription);
+    };
+  }, [refetchRooms]);
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setNewRoom({
@@ -63,45 +127,177 @@ const RoomsManagement = () => {
     });
   };
 
-  const handleAddRoom = () => {
-    addRoom(newRoom);
-    setNewRoom({
-      number: "",
-      type: "general",
-      status: "available",
-      floor: 1,
-      capacity: 1,
-      currentPatients: 0,
-      price: 200,
-    });
-    toast({
-      title: "Room added",
-      description: `Room ${newRoom.number} has been added successfully.`,
-    });
-  };
+  const handleAddRoom = async () => {
+    try {
+      // Insert the room into Supabase
+      const { data, error } = await supabase.from('rooms').insert({
+        number: newRoom.number,
+        type: newRoom.type,
+        status: newRoom.status,
+        floor: newRoom.floor,
+        capacity: newRoom.capacity,
+        current_patients: newRoom.currentPatients,
+        price: newRoom.price
+      }).select();
 
-  const handleUpdateStatus = (roomId: string, status: "available" | "occupied" | "maintenance") => {
-    updateRoomStatus(roomId, status);
-    
-    // Execute and show query
-    const query = `UPDATE rooms SET status = '${status}' WHERE id = '${roomId}'`;
-    setQueryResult(query);
-    
-    const room = rooms.find(r => r.id === roomId);
-    if (room) {
+      if (error) throw error;
+      
+      setNewRoom({
+        number: "",
+        type: "general",
+        status: "available",
+        floor: 1,
+        capacity: 1,
+        currentPatients: 0,
+        price: 200,
+      });
+      
       toast({
-        title: "Room status updated",
-        description: `Room ${room.number} status has been updated to ${status}.`,
+        title: "Room added",
+        description: `Room ${newRoom.number} has been added successfully.`,
+      });
+      
+      // Log the operation
+      const query = `INSERT INTO rooms (number, type, status, floor, capacity, current_patients, price) 
+                     VALUES ('${newRoom.number}', '${newRoom.type}', '${newRoom.status}', 
+                     ${newRoom.floor}, ${newRoom.capacity}, ${newRoom.currentPatients}, ${newRoom.price})`;
+      
+      await supabase.from('analytics_logs').insert({
+        action_type: 'INSERT',
+        table_name: 'rooms',
+        query: query,
+        performed_by: 'current_user'
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error adding room",
+        description: error.message,
+        variant: "destructive",
       });
     }
   };
 
-  const handleRoomSelect = (roomId: string) => {
+  const handleUpdateStatus = async (roomId: string, status: "available" | "occupied" | "maintenance") => {
+    try {
+      // If changing to occupied, ask for patient
+      if (status === "occupied") {
+        setSelectedRoom(roomId);
+        setShowPatientDialog(true);
+        return;
+      }
+      
+      const { error } = await supabase
+        .from('rooms')
+        .update({ status })
+        .eq('id', roomId);
+      
+      if (error) throw error;
+      
+      // Execute and show query
+      const query = `UPDATE rooms SET status = '${status}' WHERE id = '${roomId}'`;
+      setQueryResult(query);
+      
+      const room = rooms.find(r => r.id === roomId);
+      if (room) {
+        toast({
+          title: "Room status updated",
+          description: `Room ${room.number} status has been updated to ${status}.`,
+        });
+      }
+      
+      // Log the operation
+      await supabase.from('analytics_logs').insert({
+        action_type: 'UPDATE',
+        table_name: 'rooms',
+        query: query,
+        performed_by: 'current_user',
+        record_id: roomId
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error updating room status",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAssignPatient = async () => {
+    if (!selectedRoom || !selectedPatient) {
+      toast({
+        title: "Error",
+        description: "Please select a patient to assign to this room.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    try {
+      const room = rooms.find(r => r.id === selectedRoom);
+      if (!room) throw new Error("Room not found");
+      
+      // Update room to occupied and increment current patients
+      const { error } = await supabase
+        .from('rooms')
+        .update({ 
+          status: "occupied",
+          current_patients: room.current_patients + 1
+        })
+        .eq('id', selectedRoom);
+      
+      if (error) throw error;
+      
+      const query = `UPDATE rooms 
+                     SET status = 'occupied', current_patients = current_patients + 1 
+                     WHERE id = '${selectedRoom}'`;
+      
+      setQueryResult(query);
+      
+      toast({
+        title: "Patient assigned",
+        description: `A patient has been assigned to Room ${room.number}.`,
+      });
+      
+      // Log the operation
+      await supabase.from('analytics_logs').insert({
+        action_type: 'UPDATE',
+        table_name: 'rooms',
+        query: query,
+        performed_by: 'current_user',
+        record_id: selectedRoom
+      });
+      
+      // Close dialog and reset state
+      setShowPatientDialog(false);
+      setSelectedPatient("");
+    } catch (error: any) {
+      toast({
+        title: "Error assigning patient",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRoomSelect = async (roomId: string) => {
     setSelectedRoom(roomId);
     
     // Execute and show query
     const query = `SELECT * FROM rooms WHERE id = '${roomId}'`;
     setQueryResult(query);
+    
+    // Log the operation
+    try {
+      await supabase.from('analytics_logs').insert({
+        action_type: 'SELECT',
+        table_name: 'rooms',
+        query: query,
+        performed_by: 'current_user',
+        record_id: roomId
+      });
+    } catch (error) {
+      console.error("Error logging selection:", error);
+    }
   };
 
   const filteredRooms = rooms.filter(room => 
@@ -261,6 +457,48 @@ const RoomsManagement = () => {
         </Dialog>
       </div>
       
+      {/* Patient assignment dialog */}
+      <Dialog open={showPatientDialog} onOpenChange={setShowPatientDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Patient to Room</DialogTitle>
+            <DialogDescription>
+              Select a patient to assign to this room.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <div className="space-y-2">
+              <Label htmlFor="patient">Patient</Label>
+              <Select 
+                value={selectedPatient}
+                onValueChange={setSelectedPatient}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select patient" />
+                </SelectTrigger>
+                <SelectContent>
+                  {patients.map((patient: any) => (
+                    <SelectItem key={patient.id} value={patient.id}>
+                      {patient.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPatientDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignPatient}>
+              Assign Patient
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-4">
           <Card>
@@ -318,7 +556,7 @@ const RoomsManagement = () => {
                         </TableCell>
                         <TableCell>{room.floor}</TableCell>
                         <TableCell>
-                          {room.currentPatients}/{room.capacity}
+                          {room.current_patients}/{room.capacity}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={getStatusColor(room.status)}>
@@ -397,7 +635,7 @@ const RoomsManagement = () => {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Current Patients:</span>
-                        <span className="font-medium">{room.currentPatients}</span>
+                        <span className="font-medium">{room.current_patients}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Price per Day:</span>
@@ -414,9 +652,16 @@ const RoomsManagement = () => {
                 })()}
               </CardContent>
               <CardFooter className="flex justify-end pt-4">
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => {
+                    setShowPatientDialog(true);
+                  }}
+                  disabled={rooms.find(r => r.id === selectedRoom)?.status === "occupied"}
+                >
+                  <UserRound className="mr-2 h-3 w-3" />
                   Assign Patient
-                  <ArrowRight className="ml-2 h-3 w-3" />
                 </Button>
               </CardFooter>
             </Card>
