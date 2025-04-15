@@ -56,6 +56,15 @@ const Appointments = () => {
     status: "scheduled",
   });
 
+  // Handler for input changes
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setNewAppointment(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
   // Fetch initial appointments and set up real-time subscription
   useEffect(() => {
     // Fetch initial appointments
