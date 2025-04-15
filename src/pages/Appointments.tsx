@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useData } from "@/contexts/DataContext";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, logDatabaseOperation } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { 
   Card, 
@@ -46,6 +46,7 @@ const Appointments = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [queryResult, setQueryResult] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // New appointment form state
   const [newAppointment, setNewAppointment] = useState({
@@ -81,14 +82,20 @@ const Appointments = () => {
 
     // Set up real-time subscription
     const channel = supabase
-      .channel('appointments')
+      .channel('appointments-channel')
       .on(
         'postgres_changes', 
         { event: '*', schema: 'public', table: 'appointments' }, 
         (payload) => {
+          console.log('Real-time appointment update received:', payload);
+          
           switch(payload.eventType) {
             case 'INSERT':
               setAppointments(prev => [...prev, payload.new]);
+              toast({
+                title: "New Appointment",
+                description: "A new appointment has been scheduled"
+              });
               break;
             case 'UPDATE':
               setAppointments(prev => 
@@ -96,11 +103,19 @@ const Appointments = () => {
                   apt.id === payload.new.id ? payload.new : apt
                 )
               );
+              toast({
+                title: "Appointment Updated",
+                description: "An appointment has been updated"
+              });
               break;
             case 'DELETE':
               setAppointments(prev => 
                 prev.filter(apt => apt.id !== payload.old.id)
               );
+              toast({
+                title: "Appointment Removed",
+                description: "An appointment has been cancelled"
+              });
               break;
           }
         }
@@ -114,52 +129,95 @@ const Appointments = () => {
   }, []);
 
   const fetchAppointments = async () => {
-    const { data, error } = await supabase
-      .from('appointments')
-      .select('*');
-    
-    if (error) {
+    try {
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('*');
+      
+      if (error) {
+        console.error("Error fetching appointments:", error);
+        toast({ 
+          title: "Error", 
+          description: "Failed to fetch appointments" 
+        });
+      } else {
+        console.log("Fetched appointments:", data);
+        setAppointments(data || []);
+      }
+    } catch (err) {
+      console.error("Exception when fetching appointments:", err);
       toast({ 
         title: "Error", 
-        description: "Failed to fetch appointments" 
+        description: "An unexpected error occurred" 
       });
-    } else {
-      setAppointments(data);
     }
   };
 
   const handleAddAppointment = async () => {
-    const { data, error } = await supabase
-      .from('appointments')
-      .insert({
-        patient_id: newAppointment.patient_id,
-        doctor_id: newAppointment.doctor_id,
-        date: newAppointment.date,
-        time: newAppointment.time,
-        reason: newAppointment.reason,
-        status: newAppointment.status
-      });
+    try {
+      // Validate form
+      if (!newAppointment.patient_id || !newAppointment.doctor_id || 
+          !newAppointment.date || !newAppointment.time || !newAppointment.reason) {
+        toast({
+          title: "Validation Error",
+          description: "Please fill in all required fields"
+        });
+        return;
+      }
 
-    if (error) {
+      setIsSubmitting(true);
+      
+      // Log the operation
+      const query = `INSERT INTO appointments (patient_id, doctor_id, date, time, reason, status) 
+                     VALUES ('${newAppointment.patient_id}', '${newAppointment.doctor_id}', 
+                     '${newAppointment.date}', '${newAppointment.time}', 
+                     '${newAppointment.reason}', '${newAppointment.status}')`;
+      
+      await logDatabaseOperation('INSERT', 'appointments', query);
+      
+      // Add appointment to database
+      const { data, error } = await supabase
+        .from('appointments')
+        .insert({
+          patient_id: newAppointment.patient_id,
+          doctor_id: newAppointment.doctor_id,
+          date: newAppointment.date,
+          time: newAppointment.time,
+          reason: newAppointment.reason,
+          status: newAppointment.status
+        })
+        .select();
+
+      if (error) {
+        console.error("Error adding appointment:", error);
+        toast({
+          title: "Error",
+          description: "Failed to add appointment"
+        });
+      } else {
+        toast({
+          title: "Appointment scheduled",
+          description: "Appointment has been added successfully"
+        });
+        
+        // Reset form
+        setNewAppointment({
+          patient_id: "",
+          doctor_id: "",
+          date: "",
+          time: "",
+          reason: "",
+          status: "scheduled"
+        });
+      }
+    } catch (err) {
+      console.error("Exception when adding appointment:", err);
       toast({
         title: "Error",
-        description: "Failed to add appointment"
+        description: "An unexpected error occurred"
       });
-    } else {
-      toast({
-        title: "Appointment scheduled",
-        description: "Appointment has been added successfully"
-      });
-      
-      // Reset form
-      setNewAppointment({
-        patient_id: "",
-        doctor_id: "",
-        date: "",
-        time: "",
-        reason: "",
-        status: "scheduled"
-      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -299,7 +357,12 @@ const Appointments = () => {
             </div>
             
             <div className="flex justify-end">
-              <Button onClick={handleAddAppointment}>Schedule</Button>
+              <Button 
+                onClick={handleAddAppointment} 
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Scheduling..." : "Schedule"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

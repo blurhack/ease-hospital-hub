@@ -20,6 +20,25 @@ const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 // Create the Supabase client
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
+// Enable real-time subscriptions for specific tables
+export const enableRealtimeForTable = async (tableName: string) => {
+  try {
+    await supabase.channel(`public:${tableName}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: tableName 
+      }, (payload) => {
+        console.log('Change received!', payload);
+        return payload;
+      })
+      .subscribe();
+    console.log(`Real-time enabled for ${tableName}`);
+  } catch (error) {
+    console.error(`Error enabling real-time for ${tableName}:`, error);
+  }
+};
+
 // Function to log database operations to analytics_logs table
 export const logDatabaseOperation = async (
   action_type: string,
