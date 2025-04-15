@@ -1,6 +1,6 @@
-
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useData } from "@/contexts/DataContext";
+import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { 
   Card, 
@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
-import { CalendarDays, Search, Plus, Calendar, Database, User, Clock } from "lucide-react";
+import { CalendarDays, Search, Plus, Database, User, Calendar, Clock } from "lucide-react";
 import { 
   Select,
   SelectContent,
@@ -40,62 +40,135 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Appointments = () => {
-  const { appointments, doctors, patients, executeSqlQuery } = useData();
+  const { doctors, patients } = useData();
+  const [appointments, setAppointments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedAppointment, setSelectedAppointment] = useState<string | null>(null);
-  const [queryResult, setQueryResult] = useState<string>("");
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [queryResult, setQueryResult] = useState("");
   
   // New appointment form state
   const [newAppointment, setNewAppointment] = useState({
-    patientId: "",
-    doctorId: "",
+    patient_id: "",
+    doctor_id: "",
     date: "",
     time: "",
     reason: "",
-    status: "scheduled" as "scheduled" | "completed" | "cancelled",
+    status: "scheduled",
   });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setNewAppointment({
-      ...newAppointment,
-      [name]: value,
-    });
+  // Fetch initial appointments and set up real-time subscription
+  useEffect(() => {
+    // Fetch initial appointments
+    fetchAppointments();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel('appointments')
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'appointments' }, 
+        (payload) => {
+          switch(payload.eventType) {
+            case 'INSERT':
+              setAppointments(prev => [...prev, payload.new]);
+              break;
+            case 'UPDATE':
+              setAppointments(prev => 
+                prev.map(apt => 
+                  apt.id === payload.new.id ? payload.new : apt
+                )
+              );
+              break;
+            case 'DELETE':
+              setAppointments(prev => 
+                prev.filter(apt => apt.id !== payload.old.id)
+              );
+              break;
+          }
+        }
+      )
+      .subscribe();
+
+    // Cleanup subscription
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchAppointments = async () => {
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('*');
+    
+    if (error) {
+      toast({ 
+        title: "Error", 
+        description: "Failed to fetch appointments" 
+      });
+    } else {
+      setAppointments(data);
+    }
   };
 
-  const handleAddAppointment = () => {
-    // This would normally add the appointment to the database
-    toast({
-      title: "Appointment scheduled",
-      description: `Appointment has been scheduled successfully.`,
-    });
-    
-    // Reset form
-    setNewAppointment({
-      patientId: "",
-      doctorId: "",
-      date: "",
-      time: "",
-      reason: "",
-      status: "scheduled",
-    });
+  const handleAddAppointment = async () => {
+    const { data, error } = await supabase
+      .from('appointments')
+      .insert({
+        patient_id: newAppointment.patient_id,
+        doctor_id: newAppointment.doctor_id,
+        date: newAppointment.date,
+        time: newAppointment.time,
+        reason: newAppointment.reason,
+        status: newAppointment.status
+      });
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to add appointment"
+      });
+    } else {
+      toast({
+        title: "Appointment scheduled",
+        description: "Appointment has been added successfully"
+      });
+      
+      // Reset form
+      setNewAppointment({
+        patient_id: "",
+        doctor_id: "",
+        date: "",
+        time: "",
+        reason: "",
+        status: "scheduled"
+      });
+    }
   };
 
-  const handleAppointmentSelect = (appointmentId: string) => {
-    setSelectedAppointment(appointmentId);
+  const handleAppointmentSelect = (appointment) => {
+    setSelectedAppointment(appointment);
     
-    // Execute and show query
+    // Create and show query
     const query = `SELECT a.*, p.name as patient_name, d.name as doctor_name 
-                  FROM appointments a 
-                  JOIN patients p ON a.patientId = p.id 
-                  JOIN doctors d ON a.doctorId = d.id 
-                  WHERE a.id = '${appointmentId}'`;
+                   FROM appointments a 
+                   JOIN patients p ON a.patient_id = p.id 
+                   JOIN doctors d ON a.doctor_id = d.id 
+                   WHERE a.id = '${appointment.id}'`;
     setQueryResult(query);
   };
 
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "completed": return "bg-green-100 text-green-800";
+      case "cancelled": return "bg-red-100 text-red-800";
+      case "scheduled": return "bg-blue-100 text-blue-800";
+      default: return "bg-gray-100 text-gray-800";
+    }
+  };
+
   const filteredAppointments = appointments.filter(appointment => {
-    const patient = patients.find(p => p.id === appointment.patientId);
-    const doctor = doctors.find(d => d.id === appointment.doctorId);
+    const patient = patients.find(p => p.id === appointment.patient_id);
+    const doctor = doctors.find(d => d.id === appointment.doctor_id);
     
     return (
       (patient?.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -105,30 +178,6 @@ const Appointments = () => {
     );
   });
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-100 text-green-800";
-      case "cancelled":
-        return "bg-red-100 text-red-800";
-      case "scheduled":
-        return "bg-blue-100 text-blue-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-  
-  const getPatientName = (patientId: string) => {
-    const patient = patients.find(p => p.id === patientId);
-    return patient ? patient.name : "Unknown Patient";
-  };
-  
-  const getDoctorName = (doctorId: string) => {
-    const doctor = doctors.find(d => d.id === doctorId);
-    return doctor ? doctor.name : "Unknown Doctor";
-  };
-
-  // Categorize appointments by status
   const upcomingAppointments = filteredAppointments.filter(a => a.status === "scheduled");
   const completedAppointments = filteredAppointments.filter(a => a.status === "completed");
   const cancelledAppointments = filteredAppointments.filter(a => a.status === "cancelled");
@@ -160,8 +209,8 @@ const Appointments = () => {
               <div className="space-y-2">
                 <Label htmlFor="patientId">Patient</Label>
                 <Select 
-                  value={newAppointment.patientId}
-                  onValueChange={(value) => setNewAppointment({...newAppointment, patientId: value})}
+                  value={newAppointment.patient_id}
+                  onValueChange={(value) => setNewAppointment({...newAppointment, patient_id: value})}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select patient" />
@@ -179,8 +228,8 @@ const Appointments = () => {
               <div className="space-y-2">
                 <Label htmlFor="doctorId">Doctor</Label>
                 <Select 
-                  value={newAppointment.doctorId}
-                  onValueChange={(value) => setNewAppointment({...newAppointment, doctorId: value})}
+                  value={newAppointment.doctor_id}
+                  onValueChange={(value) => setNewAppointment({...newAppointment, doctor_id: value})}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select doctor" />
@@ -267,44 +316,44 @@ const Appointments = () => {
                 <TabsContent value="upcoming">
                   <AppointmentTable 
                     appointments={upcomingAppointments} 
-                    getPatientName={getPatientName}
-                    getDoctorName={getDoctorName}
+                    patients={patients}
+                    doctors={doctors}
                     getStatusColor={getStatusColor}
                     onSelect={handleAppointmentSelect}
-                    selectedId={selectedAppointment}
+                    selectedId={selectedAppointment?.id}
                   />
                 </TabsContent>
                 
                 <TabsContent value="completed">
                   <AppointmentTable 
                     appointments={completedAppointments} 
-                    getPatientName={getPatientName}
-                    getDoctorName={getDoctorName}
+                    patients={patients}
+                    doctors={doctors}
                     getStatusColor={getStatusColor}
                     onSelect={handleAppointmentSelect}
-                    selectedId={selectedAppointment}
+                    selectedId={selectedAppointment?.id}
                   />
                 </TabsContent>
                 
                 <TabsContent value="cancelled">
                   <AppointmentTable 
                     appointments={cancelledAppointments} 
-                    getPatientName={getPatientName}
-                    getDoctorName={getDoctorName}
+                    patients={patients}
+                    doctors={doctors}
                     getStatusColor={getStatusColor}
                     onSelect={handleAppointmentSelect}
-                    selectedId={selectedAppointment}
+                    selectedId={selectedAppointment?.id}
                   />
                 </TabsContent>
                 
                 <TabsContent value="all">
                   <AppointmentTable 
                     appointments={filteredAppointments} 
-                    getPatientName={getPatientName}
-                    getDoctorName={getDoctorName}
+                    patients={patients}
+                    doctors={doctors}
                     getStatusColor={getStatusColor}
                     onSelect={handleAppointmentSelect}
-                    selectedId={selectedAppointment}
+                    selectedId={selectedAppointment?.id}
                   />
                 </TabsContent>
               </Tabs>
@@ -336,11 +385,8 @@ const Appointments = () => {
               </CardHeader>
               <CardContent>
                 {(() => {
-                  const appointment = appointments.find(a => a.id === selectedAppointment);
-                  if (!appointment) return null;
-                  
-                  const patient = patients.find(p => p.id === appointment.patientId);
-                  const doctor = doctors.find(d => d.id === appointment.doctorId);
+                  const patient = patients.find(p => p.id === selectedAppointment.patient_id);
+                  const doctor = doctors.find(d => d.id === selectedAppointment.doctor_id);
                   
                   return (
                     <div className="space-y-4">
@@ -363,7 +409,7 @@ const Appointments = () => {
                       <div className="flex items-center gap-3 pb-2 border-b">
                         <Calendar className="h-6 w-6 text-gray-600" />
                         <div>
-                          <p className="font-medium">{appointment.date}</p>
+                          <p className="font-medium">{selectedAppointment.date}</p>
                           <p className="text-sm text-muted-foreground">Appointment Date</p>
                         </div>
                       </div>
@@ -371,20 +417,20 @@ const Appointments = () => {
                       <div className="flex items-center gap-3 pb-2 border-b">
                         <Clock className="h-6 w-6 text-gray-600" />
                         <div>
-                          <p className="font-medium">{appointment.time}</p>
+                          <p className="font-medium">{selectedAppointment.time}</p>
                           <p className="text-sm text-muted-foreground">Appointment Time</p>
                         </div>
                       </div>
                       
                       <div className="pb-2 border-b">
                         <p className="text-sm text-muted-foreground mb-1">Reason</p>
-                        <p>{appointment.reason}</p>
+                        <p>{selectedAppointment.reason}</p>
                       </div>
                       
                       <div className="pb-2">
                         <p className="text-sm text-muted-foreground mb-1">Status</p>
-                        <Badge variant="outline" className={getStatusColor(appointment.status)}>
-                          {appointment.status}
+                        <Badge variant="outline" className={getStatusColor(selectedAppointment.status)}>
+                          {selectedAppointment.status}
                         </Badge>
                       </div>
                       
@@ -404,22 +450,24 @@ const Appointments = () => {
   );
 };
 
-// Appointment Table Component
 const AppointmentTable = ({ 
   appointments, 
-  getPatientName, 
-  getDoctorName,
+  patients,
+  doctors,
   getStatusColor,
   onSelect,
   selectedId
-}: { 
-  appointments: any[],
-  getPatientName: (id: string) => string,
-  getDoctorName: (id: string) => string,
-  getStatusColor: (status: string) => string,
-  onSelect: (id: string) => void,
-  selectedId: string | null
 }) => {
+  const getPatientName = (patientId) => {
+    const patient = patients.find(p => p.id === patientId);
+    return patient ? patient.name : "Unknown Patient";
+  };
+  
+  const getDoctorName = (doctorId) => {
+    const doctor = doctors.find(d => d.id === doctorId);
+    return doctor ? doctor.name : "Unknown Doctor";
+  };
+
   return (
     <Table>
       <TableHeader>
@@ -444,12 +492,12 @@ const AppointmentTable = ({
             <TableRow 
               key={appointment.id}
               className={selectedId === appointment.id ? "bg-muted/50" : ""}
-              onClick={() => onSelect(appointment.id)}
+              onClick={() => onSelect(appointment)}
             >
               <TableCell className="font-medium cursor-pointer">
-                {getPatientName(appointment.patientId)}
+                {getPatientName(appointment.patient_id)}
               </TableCell>
-              <TableCell>{getDoctorName(appointment.doctorId)}</TableCell>
+              <TableCell>{getDoctorName(appointment.doctor_id)}</TableCell>
               <TableCell>{appointment.date}</TableCell>
               <TableCell>{appointment.time}</TableCell>
               <TableCell>{appointment.reason}</TableCell>
